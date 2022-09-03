@@ -1,7 +1,25 @@
-# darkstat
+# darkstat-peers
 
-https://unix4lyfe.org/darkstat/
+This is a fork of https://unix4lyfe.org/darkstat/
 
+## Enhancements in this fork
+### Peer statistics
+--peers activates gathering statistics instead of just a summary per port
+as the port summary statistics are redundant with this you can deactivate
+it with --no-ports
+### Unit selection
+To ease readbility You can switch now from between byte, kB, MB, GB and
+automatic. Automatic is the highest unit, which still produces a tenth-part
+### Scan for http host headers and TLS SNI
+Most of the time reverse lookup of IPs is does not return very meaningful
+names, in particular for large content providers. This enhancements scans
+for HTTP requests and extracts the host name from there. As this only works
+for unencrypted requests, the TLS SNI field is also evaluated. During the 
+setup of a TLS connection a multi homed server needs to to know which
+web-site will be requested, therefore usually the desired DNS name is
+indicated in the TLS SNI field.
+
+# Original description of the package
 darkstat is a network statistics gatherer.
 
 It sniffs packets on a specified interface, accumulates statistics, and
