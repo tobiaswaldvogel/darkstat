@@ -87,7 +87,8 @@ enum DISPLAY_UNITS {
    UNIT_B    = 1,
    UNIT_KB   = 2,
    UNIT_MB   = 3,
-   UNIT_GB   = 4
+   UNIT_GB   = 4,
+   UNIT_TB   = 5
 };
 
 enum DISPLAY_UNITS display_unit;
@@ -97,14 +98,16 @@ const char* unit_val[] = {
     [UNIT_B]    = "b",
     [UNIT_KB]   = "kb", 
     [UNIT_MB]   = "mb",
-    [UNIT_GB]   = "gb"
+    [UNIT_GB]   = "gb",
+    [UNIT_TB]   = "tb"
 };
 
 const char* unit_caption[] = {
     [UNIT_B]    = "",
     [UNIT_KB]   = "kB", 
     [UNIT_MB]   = "MB",
-    [UNIT_GB]   = "GB"
+    [UNIT_GB]   = "GB",
+    [UNIT_TB]   = "TB"
 };
 
 /* We only use one hosts_db hashtable and this is it. */
@@ -364,33 +367,39 @@ format_value_with_unit(struct str *buf, qu value)
    qu frac;
    enum DISPLAY_UNITS actual_unit = display_unit;
 
-   if (display_unit == UNIT_AUTO)
-      actual_unit = value < 1000 ? UNIT_B :
-                    value < 1000000 ? UNIT_KB :
-                    value < 1000000000 ? UNIT_MB : UNIT_GB;
-
-   if (actual_unit == UNIT_B) {
-      str_appendf(buf, " %'qu", value);
-      return;
-   }
+   if (actual_unit == UNIT_AUTO)
+      actual_unit = value < 100 ? UNIT_B :
+                    value < 100000 ? UNIT_KB :
+                    value < 100000000 ? UNIT_MB : 
+                    value < 100000000000 ? UNIT_GB : UNIT_TB;
 
    switch (actual_unit) {
+      case UNIT_B:
+         str_appendf(buf, " %'qu", value);
+         return;
+
       case UNIT_KB:
-         value += 50;         /* rounding */
+         value += 50;          /* rounding */
          value /= 100;
          break;
 
       case UNIT_MB:
-         value += 50000;      /* rounding */
+         value += 50000;       /* rounding */
          value /= 100000;
          break;
 
       case UNIT_GB:
-         value += 50000000;   /* rounding */
+         value += 50000000;    /* rounding */
          value /= 100000000;
          break;
          
-      default: /* Make compiler happy */
+      case UNIT_TB:
+         value += 50000000000; /* rounding */
+         value /= 100000000000;
+         break;
+
+      case UNIT_AUTO: /* can't happen but makes the compiler happy */
+         break;
    }
 
    frac = value % 10;
@@ -1409,12 +1418,14 @@ html_unit_links(struct str *buf, const char *qs)
        "<a class=\"%s\" href=\"?%skb\">kB</a>"
        "<a class=\"%s\" href=\"?%smb\">MB</a>"
        "<a class=\"%s\" href=\"?%sgb\">GB</a>"
+       "<a class=\"%s\" href=\"?%stb\">TB</a>"
        "</span><br>", 
        display_unit == UNIT_AUTO ? cl_unit_selected : cl_unit, target,
        display_unit == UNIT_B    ? cl_unit_selected : cl_unit, target,
        display_unit == UNIT_KB   ? cl_unit_selected : cl_unit, target,
        display_unit == UNIT_MB   ? cl_unit_selected : cl_unit, target,
-       display_unit == UNIT_GB   ? cl_unit_selected : cl_unit, target);
+       display_unit == UNIT_GB   ? cl_unit_selected : cl_unit, target,
+       display_unit == UNIT_TB   ? cl_unit_selected : cl_unit, target);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1446,6 +1457,7 @@ html_hosts_main(const char *qs)
       else if (strcmp(qs_unit, "kb") == 0) display_unit = UNIT_KB;
       else if (strcmp(qs_unit, "mb") == 0) display_unit = UNIT_MB;
       else if (strcmp(qs_unit, "gb") == 0) display_unit = UNIT_GB;
+      else if (strcmp(qs_unit, "tb") == 0) display_unit = UNIT_TB;
    }
 
    /* validate sort */
@@ -1545,6 +1557,7 @@ static struct str *html_hosts_detail(const char *qs, const char *ip) {
       else if (strcmp(qs_unit, "kb") == 0) display_unit = UNIT_KB;
       else if (strcmp(qs_unit, "mb") == 0) display_unit = UNIT_MB;
       else if (strcmp(qs_unit, "gb") == 0) display_unit = UNIT_GB;
+      else if (strcmp(qs_unit, "tb") == 0) display_unit = UNIT_TB;
    }
 
    /* Overview. */
