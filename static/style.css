@@ -32,6 +32,10 @@ h1, h2, h3, h4, h5, h6
                { margin-top:10px; margin-bottom:5px; color: #000000;
                  font-family: Arial, sans-serif; font-weight:bold; }
 .pageheader    { border-bottom: 2px dotted black; }
+.unitselect    { float: right; }
+.unitselect a  { padding-left: 5px; padding-right: 5px;
+                 color:black; text-decoration: none;  }
+.unitselect a.selected { font-weight: bold; }
 table          { border-collapse: collapse; }
 td, th { border:1px solid #C0C0C0; padding:1px 5px 1px 5px; }
 td.num { text-align:right; }

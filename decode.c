@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <arpa/inet.h> /* inet_ntoa() */
 #include <net/if.h> /* struct ifreq */
+#include <ctype.h> /* isdigit */
 
 /* need struct ether_header */
 #ifdef __NetBSD__ /* works for NetBSD 5.1.2 */
@@ -397,6 +398,7 @@ static void helper_ip_deeper(HELPER_ARGS) {
    }
 }
 
+/* Try to extract to host from from TLS SNI */
 static int helper_tls(HELPER_ARGS) {
    if (len < TLS_HDSHK_SESSION)
       return 0;
@@ -461,8 +463,10 @@ static int helper_tls(HELPER_ARGS) {
    return 0;
 }
 
+/* Try to extract the host name from the http header host */
 static void helper_http(HELPER_ARGS) {
    uint16_t pos, end;
+   size_t   dots, nondigits;
 
    if (len < 4)
       return;
@@ -470,40 +474,42 @@ static void helper_http(HELPER_ARGS) {
    if (memcmp(pdata, "GET", 3) && memcmp(pdata, "POST", 4))
       return;
 
-   for (pos = 4; pos < len -1 ; pos++){
-      if (pdata[pos] == '\r')
-         return;
-         
+   for (pos = 4; pos < len -1 ; pos++) {
       /* Advance to next line */
       for (; pos < len && pdata[pos] != '\n'; pos++);
       if (pos >= len - 6)
          return;
 
       pos++;
-      if ((pdata[pos]   == 'H' || pdata[pos]   == 'h') &&
-          (pdata[pos+1] == 'O' || pdata[pos+1] == 'o') &&
-          (pdata[pos+2] == 'S' || pdata[pos+2] == 's') &&
-          (pdata[pos+3] == 'T' || pdata[pos+3] == 't') &&
-           pdata[pos+4] == ':') {
-         
-         size_t   dots = 0, nondigits = 0;
+      if (pdata[pos] == '\r')
+         return;  /* End of headers */
 
-         pos += 5;
-         for (; pos < len && pdata[pos] <= ' '; pos++);
-         for (end = pos; end < len && pdata[end] != '\r'; end++)
-            if (pdata[end] == '.')
-               dots++;
-            else if ((pdata[end] < '0' || pdata[end] > '9') &&
-                      pdata[end] != ':')
-               nondigits++;
+      if ((pdata[pos]   != 'H' && pdata[pos]   != 'h') ||
+          (pdata[pos+1] != 'O' && pdata[pos+1] != 'o') ||
+          (pdata[pos+2] != 'S' && pdata[pos+2] != 's') ||
+          (pdata[pos+3] != 'T' && pdata[pos+3] != 't') ||
+           pdata[pos+4] != ':')
+           continue;
+        
+      dots = nondigits = 0;
+      pos += 5;
+      for (; pos < len && pdata[pos] <= ' '; pos++);
+      for (end = pos; end < len && pdata[end] != ':' && pdata[end] != '\r'; end++)
+         if (pdata[end] == '.')
+            dots++;
+         else if (!isdigit(pdata[end]))
+            nondigits++;
 
-         if (nondigits == 0 && dots == 3)
-            return;
-
-         sm->hostname = (const char*)(pdata + pos);
-         sm->hostname_length = end - pos;
+      if (pos ==end)
          return;
-      }
+         
+      /* Ignore if it looks like an IP */
+      if  (nondigits == 0 && dots == 3)
+         return;
+
+      sm->hostname = (const char*)(pdata + pos);
+      sm->hostname_length = end - pos;
+      return;
    }
 }
 

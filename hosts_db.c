@@ -82,6 +82,31 @@ static void hashtable_free(struct hashtable *h);
 #define PORT_BITS 1  /* initial size of ports tables */
 #define PROTO_BITS 1 /* initial size of proto table */
 
+enum DISPLAY_UNITS {
+   UNIT_AUTO = 0,
+   UNIT_B    = 1,
+   UNIT_KB   = 2,
+   UNIT_MB   = 3,
+   UNIT_GB   = 4
+};
+
+enum DISPLAY_UNITS display_unit;
+
+const char* unit_val[] = {
+    [UNIT_AUTO] = "auto",
+    [UNIT_B]    = "b",
+    [UNIT_KB]   = "kb", 
+    [UNIT_MB]   = "mb",
+    [UNIT_GB]   = "gb"
+};
+
+const char* unit_caption[] = {
+    [UNIT_B]    = "",
+    [UNIT_KB]   = "kB", 
+    [UNIT_MB]   = "MB",
+    [UNIT_GB]   = "GB"
+};
+
 /* We only use one hosts_db hashtable and this is it. */
 static struct hashtable *hosts_db = NULL;
 
@@ -333,6 +358,59 @@ free_func_simple(struct bucket *b _unused_)
 /* ---------------------------------------------------------------------------
  * format_func collection (ordered by struct)
  */
+static void 
+format_value_with_unit(struct str *buf, qu value)
+{
+   qu frac;
+   enum DISPLAY_UNITS actual_unit = display_unit;
+
+   if (display_unit == UNIT_AUTO)
+      actual_unit = value < 1000 ? UNIT_B :
+                    value < 1000000 ? UNIT_KB :
+                    value < 1000000000 ? UNIT_MB : UNIT_GB;
+
+   if (actual_unit == UNIT_B) {
+      str_appendf(buf, " %'qu", value);
+      return;
+   }
+
+   switch (actual_unit) {
+      case UNIT_KB:
+         value += 50;         /* rounding */
+         value /= 100;
+         break;
+
+      case UNIT_MB:
+         value += 50000;      /* rounding */
+         value /= 100000;
+         break;
+
+      case UNIT_GB:
+         value += 50000000;   /* rounding */
+         value /= 100000000;
+         break;
+         
+      default: /* Make compiler happy */
+   }
+
+   frac = value % 10;
+   value /= 10;
+   str_appendf(buf, "%'qu.%'qu%s", value, frac, unit_caption[actual_unit]);
+}
+
+static void
+format_row_statistics(struct str *buf, const struct bucket *b)
+{
+   str_append(buf, " <td class=\"num\">");
+   format_value_with_unit(buf, b->in);
+   str_append(buf, "</td>\n"
+                   " <td class=\"num\">");
+   format_value_with_unit(buf, b->out);
+   str_append(buf, "</td>\n"
+                   " <td class=\"num\">");
+   format_value_with_unit(buf, b->total);
+   str_append(buf, "</td>\n");
+}
 
 static void
 format_cols_host(struct str *buf)
@@ -341,6 +419,8 @@ format_cols_host(struct str *buf)
     * specifically "full" and "start"
     * when setting sort direction
     */
+    const char *unit_str = unit_val[display_unit];
+    
    str_append(buf,
       "<table>\n"
       "<tr>\n"
@@ -348,12 +428,14 @@ format_cols_host(struct str *buf)
       " <th>Hostname</th>\n");
    if (hosts_db_show_macs) str_append(buf,
       " <th>MAC Address</th>\n");
-   str_append(buf,
-      " <th><a href=\"?sort=in\">In</a></th>\n"
-      " <th><a href=\"?sort=out\">Out</a></th>\n"
-      " <th><a href=\"?sort=total\">Total</a></th>\n");
-   if (opt_want_lastseen) str_append(buf,
-      " <th><a href=\"?sort=lastseen\">Last seen</a></th>\n");
+   str_appendf(buf,
+      " <th><a href=\"?sort=in&unit=%s\">In</a></th>\n"
+      " <th><a href=\"?sort=out&unit=%s\">Out</a></th>\n"
+      " <th><a href=\"?sort=total&unit=%s\">Total</a></th>\n",
+      unit_str, unit_str, unit_str);
+   if (opt_want_lastseen) str_appendf(buf,
+      " <th><a href=\"?sort=lastseen&unit=%s\">Last seen</a></th>\n",
+      unit_str);
    str_append(buf,
       "</tr>\n");
 }
@@ -365,9 +447,9 @@ format_row_host(struct str *buf, const struct bucket *b)
 
    str_appendf(buf,
       "<tr>\n"
-      " <td><a href=\"./%s/\">%s</a></td>\n"
+      " <td><a href=\"./%s/?unit=%s\">%s</a></td>\n"
       " <td>%s</td>\n",
-      ip, ip,
+      ip, unit_val[display_unit], ip,
       (b->u.host.dns == NULL) ? "" : b->u.host.dns);
 
    if (hosts_db_show_macs)
@@ -380,13 +462,7 @@ format_row_host(struct str *buf, const struct bucket *b)
          b->u.host.mac_addr[4],
          b->u.host.mac_addr[5]);
 
-   str_appendf(buf,
-      " <td class=\"num\">%'qu</td>\n"
-      " <td class=\"num\">%'qu</td>\n"
-      " <td class=\"num\">%'qu</td>\n",
-      (qu)b->in,
-      (qu)b->out,
-      (qu)b->total);
+   format_row_statistics(buf, b);
 
    if (opt_want_lastseen) {
       int64_t last = b->u.host.last_seen_mono;
@@ -442,17 +518,14 @@ format_row_port_tcp(struct str *buf, const struct bucket *b)
    str_appendf(buf,
       "<tr>\n"
       " <td class=\"num\">%u</td>\n"
-      " <td>%s</td>\n"
-      " <td class=\"num\">%'qu</td>\n"
-      " <td class=\"num\">%'qu</td>\n"
-      " <td class=\"num\">%'qu</td>\n"
+      " <td>%s</td>\n",
+      p->port,
+      getservtcp(p->port)
+   );
+   format_row_statistics(buf, b);
+   str_appendf(buf,
       " <td class=\"num\">%'qu</td>\n"
       "</tr>\n",
-      p->port,
-      getservtcp(p->port),
-      (qu)b->in,
-      (qu)b->out,
-      (qu)b->total,
       (qu)p->syn
    );
 }
@@ -480,17 +553,12 @@ format_row_port_udp(struct str *buf, const struct bucket *b)
    str_appendf(buf,
       "<tr>\n"
       " <td class=\"num\">%u</td>\n"
-      " <td>%s</td>\n"
-      " <td class=\"num\">%'qu</td>\n"
-      " <td class=\"num\">%'qu</td>\n"
-      " <td class=\"num\">%'qu</td>\n"
-      "</tr>\n",
+      " <td>%s</td>\n",
       p->port,
-      getservudp(p->port),
-      (qu)b->in,
-      (qu)b->out,
-      (qu)b->total
+      getservudp(p->port)
    );
+   format_row_statistics(buf, b);
+   str_append(buf, "</tr>\n");
 }
 
 static void
@@ -516,17 +584,12 @@ format_row_ip_proto(struct str *buf, const struct bucket *b)
    str_appendf(buf,
       "<tr>\n"
       " <td class=\"num\">%u</td>\n"
-      " <td>%s</td>\n"
-      " <td class=\"num\">%'qu</td>\n"
-      " <td class=\"num\">%'qu</td>\n"
-      " <td class=\"num\">%'qu</td>\n"
-      "</tr>\n",
+      " <td>%s</td>\n",
       p->proto,
-      getproto(p->proto),
-      (qu)b->in,
-      (qu)b->out,
-      (qu)b->total
+      getproto(p->proto)
    );
+   format_row_statistics(buf, b);
+   str_append(buf, "</tr>\n");
 }
 
 /* As there might be multiple rows per peer, the standard CSS pattern
@@ -584,9 +647,9 @@ format_rows_peer_port(struct str *buf,
 
          if (addr)
             str_appendf(buf, 
-               " <td><a href=\"/hosts/%s\">%s</a></td>\n"
+               " <td><a href=\"/hosts/%s?unit=%s\">%s</a></td>\n"
                " <td>%s</td>\n",
-               addr,
+               addr, unit_val[display_unit],
                addr,
                hostname);
 
@@ -614,15 +677,7 @@ format_rows_peer_port(struct str *buf,
                              " <td></td>\n",
                              c_multiple);
 
-         str_appendf(buf,
-            " <td class=\"num\">%'qu</td>\n"
-            " <td class=\"num\">%'qu</td>\n"
-            " <td class=\"num\">%'qu</td>\n"
-            "</tr>\n",
-            (qu)b->in,
-            (qu)b->out,
-            (qu)b->total
-          );
+         format_row_statistics(buf, b);
          lines++;
       }
    }
@@ -630,8 +685,8 @@ format_rows_peer_port(struct str *buf,
 }
 
 static size_t
-format_rows_peer_proto(struct str *buf,
-   const char *addr, const char *hostname, struct hashtable *ht)
+format_rows_peer_proto(struct str *buf, const char *addr,
+                       const char *hostname, struct hashtable *ht)
 {
    unsigned int i;
    struct bucket *b;
@@ -657,16 +712,11 @@ format_rows_peer_proto(struct str *buf,
                           " <td>&nbsp;</td>\n"
                           " <td>%s</td>\n"
                           " <td>&nbsp;</td>\n"
-                          " <td>&nbsp;</td>\n"
-                          " <td class=\"num\">%'qu</td>\n"
-                          " <td class=\"num\">%'qu</td>\n"
-                          " <td class=\"num\">%'qu</td>\n"
-                          "</tr>\n",
-                     getproto(b->u.ip_proto.proto),
-                     (qu)b->in,
-                     (qu)b->out,
-                     (qu)b->total
+                          " <td>&nbsp;</td>\n",
+                     getproto(b->u.ip_proto.proto)
          );
+         format_row_statistics(buf, b);
+         str_append(buf, "</tr>\n");
          lines++;
       }
    }
@@ -711,21 +761,16 @@ format_row_peer(struct str *buf, const struct bucket *b)
          " <td rowspan=\"",
          row_peer_port_odd ? "odd" : "even");
       pos_rowspan[0] = str_len(buf);
-      str_appendf(buf,   "1\"      ><a href=\"/hosts/%s\">%s</a></td>\n"
+      str_appendf(buf,   "1\"      ><a href=\"/hosts/%s?unit=%s\">%s</a></td>\n"
          " <td rowspan=\"",
-         addr, addr);
+         addr, unit_val[display_unit], addr);
       pos_rowspan[1] = str_len(buf);
       str_appendf(buf,   "1\"      >%s</td>\n"
-         " <td colspan=\"5\">&nbsp;</td>\n"
-         " <td class=\"num\">%'qu</td>\n"
-         " <td class=\"num\">%'qu</td>\n"
-         " <td class=\"num\">%'qu</td>\n"
-         "</tr>\n",
-         hostname,
-         (qu)b->in,
-         (qu)b->out,
-         (qu)b->total
+         " <td colspan=\"5\">&nbsp;</td>\n",
+         hostname
       );
+      format_row_statistics(buf, b);
+      str_append(buf, "</tr>\n");
       addr = NULL;
 
       lines = 1;
@@ -1193,7 +1238,7 @@ peer_get_ip_proto(struct bucket *peer, const uint8_t proto)
 }
 
 static struct str *html_hosts_main(const char *qs);
-static struct str *html_hosts_detail(const char *ip);
+static struct str *html_hosts_detail(const char *qs, const char *ip);
 
 /* ---------------------------------------------------------------------------
  * Web interface: delegate the /hosts/ space.
@@ -1213,7 +1258,7 @@ html_hosts(const char *uri, const char *query)
       buf = html_hosts_main(query);
    else if (num_elems == 2)
       /* /hosts/<IP of host>/ */
-      buf = html_hosts_detail(elem[1]);
+      buf = html_hosts_detail(query, elem[1]);
 
    for (i=0; i<num_elems; i++)
       free(elem[i]);
@@ -1312,6 +1357,66 @@ format_table(struct str *buf, struct hashtable *ht, unsigned int start,
    str_append(buf, "</table>\n");
 }
 
+
+/*
+ * Web interface: html title with links for units
+ */
+void
+html_unit_links(struct str *buf, const char *qs)
+{
+    static const char cl_unit_selected[] = "selected";
+    static const char cl_unit[]          = "select";
+   char* target;
+   size_t pos;
+
+    if (!qs || *qs == 0) {
+       /* No query string */
+       pos = 0;
+       target = alloca(16);
+    } else {
+       const char *s;
+       size_t   len = strlen(qs);
+
+       target = alloca(len + 16);
+       s = strstr(qs, "unit=");
+       if (!s) {
+          /* No unit in query string */
+          memcpy(target, qs, len);
+          pos = len;
+          target[pos++] = '&';
+       } else {
+          pos = s - qs;
+          memcpy(target, qs, pos);
+          s = strchr(s, '&');
+          if (!s) { /* Last option */
+          } else {
+            size_t   remain;
+
+            s++;
+            remain = len - (s - qs);
+            memcpy(target + pos, s, remain);
+            pos += remain;
+            target[pos++] = '&';
+         }
+       }
+    }
+    strcpy(target + pos, "unit=");
+
+    str_appendf(buf,
+       "<span class=\"unitselect\">"
+       "<a class=\"%s\" href=\"?%sauto\">Auto</a>"
+       "<a class=\"%s\" href=\"?%sb\">B</a>"
+       "<a class=\"%s\" href=\"?%skb\">kB</a>"
+       "<a class=\"%s\" href=\"?%smb\">MB</a>"
+       "<a class=\"%s\" href=\"?%sgb\">GB</a>"
+       "</span><br>", 
+       display_unit == UNIT_AUTO ? cl_unit_selected : cl_unit, target,
+       display_unit == UNIT_B    ? cl_unit_selected : cl_unit, target,
+       display_unit == UNIT_KB   ? cl_unit_selected : cl_unit, target,
+       display_unit == UNIT_MB   ? cl_unit_selected : cl_unit, target,
+       display_unit == UNIT_GB   ? cl_unit_selected : cl_unit, target);
+}
+
 /* ---------------------------------------------------------------------------
  * Web interface: sorted table of hosts.
  */
@@ -1319,7 +1424,7 @@ static struct str *
 html_hosts_main(const char *qs)
 {
    struct str *buf = str_make();
-   char *qs_start, *qs_sort, *qs_full, *ep;
+   char *qs_start, *qs_sort, *qs_full, *qs_unit, *ep;
    const char *sortstr;
    int start, full = 0;
    enum sort_dir sort;
@@ -1331,6 +1436,16 @@ html_hosts_main(const char *qs)
    if (qs_full != NULL) {
       full = 1;
       free(qs_full);
+   }
+
+   /* Handle unit in query string */
+   qs_unit = qs_get(qs, "unit");
+   display_unit = UNIT_AUTO;
+   if (qs_unit) {
+      if (strcmp(qs_unit, "b") == 0)       display_unit = UNIT_B;
+      else if (strcmp(qs_unit, "kb") == 0) display_unit = UNIT_KB;
+      else if (strcmp(qs_unit, "mb") == 0) display_unit = UNIT_MB;
+      else if (strcmp(qs_unit, "gb") == 0) display_unit = UNIT_GB;
    }
 
    /* validate sort */
@@ -1365,6 +1480,7 @@ html_hosts_main(const char *qs)
 #define FULL "full table"
 
    html_open(buf, "Hosts", /*path_depth=*/1, /*want_graph_js=*/0);
+   html_unit_links(buf, qs);
    format_table(buf, hosts_db, start, sort, full);
 
    /* <prev | full | stats | next> */
@@ -1374,20 +1490,20 @@ html_hosts_main(const char *qs)
       int prev = start - MAX_ENTRIES;
       if (prev < 0)
          prev = 0;
-      str_appendf(buf, "<a href=\"?start=%d&sort=%s\">" PREV "</a>",
-         prev, sortstr);
+      str_appendf(buf, "<a href=\"?start=%d&sort=%s&unit=%s\">" PREV "</a>",
+         prev, sortstr, unit_val[display_unit]);
    } else
       str_append(buf, PREV);
 
    if (full)
       str_append(buf, " | " FULL);
    else
-      str_appendf(buf, " | <a href=\"?full=yes&sort=%s\">" FULL "</a>",
-         sortstr);
+      str_appendf(buf, " | <a href=\"?full=yes&sort=%s&unit=%s\">" FULL "</a>",
+         sortstr, unit_val[display_unit]);
 
    if (start+MAX_ENTRIES < (int)hosts_db->count)
-      str_appendf(buf, " | <a href=\"?start=%d&sort=%s\">" NEXT "</a>",
-         start+MAX_ENTRIES, sortstr);
+      str_appendf(buf, " | <a href=\"?start=%d&sort=%s&unit=%s\">" NEXT "</a>",
+         start+MAX_ENTRIES, sortstr, unit_val[display_unit]);
    else
       str_append(buf, " | " NEXT);
 
@@ -1397,6 +1513,7 @@ html_hosts_main(const char *qs)
 done:
    if (qs_start != NULL) free(qs_start);
    if (qs_sort != NULL) free(qs_sort);
+   if (qs_unit != NULL) free(qs_unit);
    return buf;
 #undef PREV
 #undef NEXT
@@ -1406,12 +1523,13 @@ done:
 /* ---------------------------------------------------------------------------
  * Web interface: detailed view of a single host.
  */
-static struct str *html_hosts_detail(const char *ip) {
+static struct str *html_hosts_detail(const char *qs, const char *ip) {
    struct bucket *h;
    struct str *buf, *ls_len;
    char ls_when[100];
    const char *canonical;
    time_t last_seen_real;
+   char *qs_unit;
 
    h = host_search(ip);
    if (h == NULL)
@@ -1419,9 +1537,20 @@ static struct str *html_hosts_detail(const char *ip) {
 
    canonical = addr_to_str(&(h->u.host.addr));
 
+   /* Handle unit in query string */
+   qs_unit = qs_get(qs, "unit");
+   display_unit = UNIT_AUTO;
+   if (qs_unit) {
+      if (strcmp(qs_unit, "b") == 0)       display_unit = UNIT_B;
+      else if (strcmp(qs_unit, "kb") == 0) display_unit = UNIT_KB;
+      else if (strcmp(qs_unit, "mb") == 0) display_unit = UNIT_MB;
+      else if (strcmp(qs_unit, "gb") == 0) display_unit = UNIT_GB;
+   }
+
    /* Overview. */
    buf = str_make();
    html_open(buf, ip, /*path_depth=*/2, /*want_graph_js=*/0);
+   html_unit_links(buf, qs);
    if (strcmp(ip, canonical) != 0)
       str_appendf(buf, "(canonically <b>%s</b>)\n", canonical);
    str_appendf(buf,
@@ -1470,18 +1599,20 @@ static struct str *html_hosts_detail(const char *ip) {
                      (qd)h->u.host.last_seen_mono,
                      (qu)now_mono());
       }
-  }
+   }
 
-   str_appendf(buf,
+   str_append(buf, 
       "</p>\n"
       "<p>\n"
-      " <b>In:</b> %'qu<br>\n"
-      " <b>Out:</b> %'qu<br>\n"
-      " <b>Total:</b> %'qu<br>\n"
-      "</p>\n",
-      (qu)h->in,
-      (qu)h->out,
-      (qu)h->total);
+      " <b>In:</b> ");
+   format_value_with_unit(buf, h->in);
+   str_append(buf, "<br>\n"
+      " <b>Out:</b> ");
+   format_value_with_unit(buf, h->out);
+   str_append(buf, "<br>\n"
+      " <b>Total:</b> ");
+   format_value_with_unit(buf, h->total);
+   str_append(buf, "</p>\n");
 
    if (h->u.host.peers) {
       str_append(buf, "<h3>Peers</h3>\n");
@@ -1515,6 +1646,7 @@ static struct str *html_hosts_detail(const char *ip) {
 
    str_append(buf, "<br>\n");
    html_close(buf);
+   if (qs_unit != NULL) free(qs_unit);
    return buf;
 }
 
