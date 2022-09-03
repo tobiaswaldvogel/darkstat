@@ -18,6 +18,8 @@ for unencrypted requests, the TLS SNI field is also evaluated. During the
 setup of a TLS connection a multi homed server needs to to know which
 web-site will be requested, therefore usually the desired DNS name is
 indicated in the TLS SNI field.
+In order to get sufficient content data the snaplen should be increased
+to 256 ( --snaplen 256 )
 
 # Original description of the package
 darkstat is a network statistics gatherer.
